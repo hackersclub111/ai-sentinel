@@ -1,0 +1,73 @@
+name: CI/CD Pipeline for AI Sentinel
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Manual trigger for demo
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.12]  # Minimal, stable
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install black flake8 pytest pytest-cov  # Linting + coverage
+
+    - name: Lint with Black
+      run: black --check --diff src/ tests/ scripts/
+
+    - name: Lint with Flake8
+      run: flake8 src/ tests/ scripts/ --max-line-length=88 --ignore=E203,W503
+
+    - name: Run tests with coverage
+      run: |
+        pytest tests/ --cov=src/ai_sentinel --cov-report=xml --cov-report=term-missing
+        # Integration: Run init + pipeline
+        python scripts/init_db_and_model.py
+        python src/ai_sentinel/pipeline.py  # Uses example anomaly
+        # Validate metrics
+        python -c "
+from src.ai_sentinel.validation import validate_model
+import pandas as pd
+test_df = pd.read_sql('SELECT * FROM logs ORDER BY timestamp DESC LIMIT 10', 'data/sentinel.db', parse_dates=['timestamp'])
+labels = [False]*5 + [True]*5  # Assume last 5 anomalies
+metrics = validate_model(test_df, labels)
+if metrics['f1'] < 0.80:
+    raise ValueError('Validation F1 too low')
+print('Validation passed:', metrics)
+        "
+
+    - name: Upload coverage to Codecov (optional)
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+
+    - name: Build validation - Check if deployable
+      run: |
+        # Simulate Zerve deploy check (e.g., no syntax errors)
+        python -m py_compile src/ai_sentinel/*.py
+        echo "Build validated - ready for Zerve deploy"
+
+  deploy-preview:  # Only on main push (lightweight, no real deploy in MVP)
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Notify deploy ready
+      run: echo "✅ CI passed - Deploy to Zerve via Git integration"
