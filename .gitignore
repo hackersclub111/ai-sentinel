@@ -4,3 +4,9 @@ __pycache__/
 data/*.db
 data/*.pkl
 .DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.env/
